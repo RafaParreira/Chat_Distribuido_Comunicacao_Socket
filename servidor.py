@@ -3,7 +3,7 @@ import json
 from typing import Dict, Set
 
 HOST = "127.0.0.1"
-PORT = 4200
+PORT = 9999
 
 # Estado simples em memória (para protótipo):
 clients: Set[asyncio.StreamWriter] = set()
