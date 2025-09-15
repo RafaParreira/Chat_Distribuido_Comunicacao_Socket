@@ -5,7 +5,6 @@ from typing import Dict, Set
 HOST = "127.0.0.1"
 PORT = 9999
 
-# Estado simples em memória (para protótipo):
 clients: Set[asyncio.StreamWriter] = set()
 names: Dict[asyncio.StreamWriter, str] = {}
 
@@ -37,7 +36,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     name = None
 
     try:
-        # 1) Espera JOIN
+        # 1) espera JOIN
         line = await reader.readline()
         if not line:
             raise ConnectionError("empty first line")
@@ -56,12 +55,12 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         name = str(msg["name"])[:32]
         names[writer] = name
 
-        # Confirmação ao novo cliente e broadcast aos demais
+        # boas-vindas
         writer.write(jline({"type": "welcome", "you": name}))
         await writer.drain()
         await broadcast({"type": "system", "msg": f"{name} entrou no chat."}, exclude=writer)
 
-        # 2) Loop de mensagens
+        # 2) loop principal
         while True:
             line = await reader.readline()
             if not line:
@@ -76,22 +75,22 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             mtype = msg.get("type")
             if mtype == "chat":
                 text = (msg.get("msg") or "")[:2000]
-                if not text:
-                    continue
-                await broadcast({"type": "chat", "from": name, "msg": text})
+                if text:
+                    await broadcast({"type": "chat", "from": name, "msg": text})
+            elif mtype in ("file_info", "file_data", "file_end"):
+                # retransmite arquivos para todos
+                payload = dict(msg)
+                payload["from"] = name
+                await broadcast(payload, exclude=writer)
             elif mtype == "leave":
                 break
             else:
-                # Ignora tipos desconhecidos (ou responda com erro)
                 writer.write(jline({"type": "error", "error": "unknown_type"}))
                 await writer.drain()
 
-    except Exception as e:
-        # log simples
-        # print(f"Erro com {addr}: {e}")
+    except Exception:
         pass
     finally:
-        # Limpeza
         clients.discard(writer)
         left_name = names.pop(writer, None)
         if left_name:
