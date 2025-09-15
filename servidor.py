@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Dict, Set
 
-HOST = "127.0.0.1"
+HOST = "26.101.24.101"
 PORT = 9999
 
 clients: Set[asyncio.StreamWriter] = set()
