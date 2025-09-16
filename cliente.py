@@ -4,7 +4,7 @@ import sys
 import base64
 import os
 
-HOST = "26.101.24.101"
+HOST = "127.0.0.1"
 PORT = 9999
 
 def jline(obj: dict) -> bytes:
@@ -36,6 +36,7 @@ async def reader_task(reader: asyncio.StreamReader):
             file_buffers[fname] = b""
         elif t == "file_data":
             data = base64.b64decode(msg["data"])
+            # adiciona ao primeiro arquivo pendente
             for fname in file_buffers:
                 file_buffers[fname] += data
                 break
@@ -46,6 +47,15 @@ async def reader_task(reader: asyncio.StreamReader):
                     f.write(file_buffers[fname])
                 print(f"[+] Arquivo salvo como recv_{fname}")
                 del file_buffers[fname]
+        elif t == "pm":
+            # DM recebida (ou eco do servidor com "to")
+            if "from" in msg:
+                print(f"[PM] {msg['from']}: {msg.get('msg','')}")
+            elif "to" in msg:
+                print(f"[PM para {msg['to']}] {msg.get('msg','')}")
+        elif t == "who":
+            users = msg.get("users", [])
+            print("[online]", ", ".join(users))
         elif t == "error":
             print(f"[erro] {msg.get('error')}")
         else:
@@ -96,6 +106,26 @@ async def writer_task(writer: asyncio.StreamWriter, name: str):
             await writer.drain()
             break
 
+        if text.startswith("/pm "):
+            parts = text.split(" ", 2)
+            if len(parts) < 3:
+                print("[erro] uso: /pm <nome> <mensagem>")
+                continue
+            to = parts[1].strip()
+            msg_txt = parts[2].strip()
+            if not to or not msg_txt:
+                print("[erro] uso: /pm <nome> <mensagem>")
+                continue
+            writer.write(jline({"type": "pm", "to": to, "msg": msg_txt}))
+            await writer.drain()
+            continue
+
+
+        if text.lower() == "/quem":
+            writer.write(jline({"type": "who"}))
+            await writer.drain()
+            continue
+
         # comando para enviar arquivo
         if text.startswith("/enviar "):
             filepath = text.split(" ", 1)[1]
@@ -113,10 +143,12 @@ async def writer_task(writer: asyncio.StreamWriter, name: str):
         pass
 
 async def main():
-    if len(sys.argv) < 2:
-        print("Uso: python client.py <seu_nome>")
-        return
-    name = sys.argv[1]
+    while True:
+        name = input("Digite seu nome: ").strip()
+        if name:
+            name = name
+            break
+        print("Nome não pode ser vazio. Tente novamente.")
 
     reader, writer = await asyncio.open_connection(HOST, PORT)
     await asyncio.gather(
