@@ -2,18 +2,19 @@ import asyncio
 import json
 from typing import Dict, Set
 
-HOST = "26.101.24.101"
+HOST = "127.0.0.1"
 PORT = 9999
 
 clients: Set[asyncio.StreamWriter] = set()
 names: Dict[asyncio.StreamWriter, str] = {}
+by_name: Dict[str, asyncio.StreamWriter] = {}
 
 def jline(obj: dict) -> bytes:
     return (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
 
 async def broadcast(payload: dict, *, exclude: asyncio.StreamWriter | None = None):
     dead = []
-    for w in clients:
+    for w in list(clients):
         if w is exclude:
             continue
         try:
@@ -22,24 +23,31 @@ async def broadcast(payload: dict, *, exclude: asyncio.StreamWriter | None = Non
         except Exception:
             dead.append(w)
     for w in dead:
-        clients.discard(w)
-        names.pop(w, None)
-        try:
-            w.close()
-            await w.wait_closed()
-        except Exception:
-            pass
+        await disconnect(w)
+
+async def disconnect(w: asyncio.StreamWriter):
+    clients.discard(w)
+    name = names.pop(w, None)
+    if name and by_name.get(name) is w:
+        by_name.pop(name, None)
+        # avisa a todos que saiu
+        await broadcast({"type": "system", "msg": f"{name} saiu do chat."})
+    try:
+        w.close()
+        await w.wait_closed()
+    except Exception:
+        pass
 
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    addr = writer.get_extra_info("peername")
     clients.add(writer)
+    addr = writer.get_extra_info("peername")
     name = None
 
     try:
-        # 1) espera JOIN
+        # 1) Espera JOIN
         line = await reader.readline()
         if not line:
-            raise ConnectionError("empty first line")
+            return
         try:
             msg = json.loads(line.decode("utf-8").strip())
         except json.JSONDecodeError:
@@ -52,15 +60,26 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             await writer.drain()
             return
 
-        name = str(msg["name"])[:32]
-        names[writer] = name
+        # valida nome
+        name = str(msg["name"]).strip()[:32]
+        if not name or "\n" in name:
+            writer.write(jline({"type": "error", "error": "invalid_name"}))
+            await writer.drain()
+            return
+        if name in by_name:
+            writer.write(jline({"type": "error", "error": "name_in_use"}))
+            await writer.drain()
+            return
 
-        # boas-vindas
+        names[writer] = name
+        by_name[name] = writer
+
+        # confirma para o novo cliente
         writer.write(jline({"type": "welcome", "you": name}))
         await writer.drain()
         await broadcast({"type": "system", "msg": f"{name} entrou no chat."}, exclude=writer)
 
-        # 2) loop principal
+        # 2) Loop de mensagens
         while True:
             line = await reader.readline()
             if not line:
@@ -73,38 +92,67 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 continue
 
             mtype = msg.get("type")
+
             if mtype == "chat":
                 text = (msg.get("msg") or "")[:2000]
-                if text:
-                    await broadcast({"type": "chat", "from": name, "msg": text})
-            elif mtype in ("file_info", "file_data", "file_end"):
-                # retransmite arquivos para todos
-                payload = dict(msg)
-                payload["from"] = name
-                await broadcast(payload, exclude=writer)
+                if not text:
+                    continue
+                await broadcast({"type": "chat", "from": name, "msg": text})
+
+            elif mtype == "pm":
+                # DM: {"type":"pm","to":"Bob","msg":"texto"}
+                to = (msg.get("to") or "").strip()
+                text = (msg.get("msg") or "")[:2000]
+                if not to or not text:
+                    writer.write(jline({"type": "error", "error": "missing_fields"}))
+                    await writer.drain()
+                    continue
+                dest = by_name.get(to)
+                if not dest:
+                    writer.write(jline({"type": "error", "error": "user_not_found"}))
+                    await writer.drain()
+                    continue
+                # envia somente ao destino
+                try:
+                    dest.write(jline({"type": "pm", "from": name, "msg": text}))
+                    await dest.drain()
+                except Exception:
+                    # destino caiu; remove e avisa remetente
+                    await disconnect(dest)
+                    writer.write(jline({"type": "error", "error": "user_not_found"}))
+                    await writer.drain()
+                    continue
+                # opcional: eco para quem enviou (útil pra UI)
+                writer.write(jline({"type": "pm", "to": to, "msg": text}))
+                await writer.drain()
+
+            elif mtype == "who":
+                users = sorted(list(by_name.keys()))
+                writer.write(jline({"type": "who", "users": users}))
+                await writer.drain()
+
             elif mtype == "leave":
                 break
+
+            # opcional: ignore/erro para tipos desconhecidos, inclusive file_*
+            elif mtype in {"file_info", "file_data", "file_end"}:
+                writer.write(jline({"type": "error", "error": "file_not_supported_in_server"}))
+                await writer.drain()
             else:
                 writer.write(jline({"type": "error", "error": "unknown_type"}))
                 await writer.drain()
 
-    except Exception:
+    except Exception as e:
+        # log simples
+        # print(f"[erro] {addr}: {e}")
         pass
     finally:
-        clients.discard(writer)
-        left_name = names.pop(writer, None)
-        if left_name:
-            asyncio.create_task(broadcast({"type": "system", "msg": f"{left_name} saiu do chat."}))
-        try:
-            writer.close()
-            await writer.wait_closed()
-        except Exception:
-            pass
+        await disconnect(writer)
 
 async def main():
     server = await asyncio.start_server(handle_client, HOST, PORT)
-    addr = ", ".join(str(sock.getsockname()) for sock in server.sockets)
-    print(f"Servidor escutando em {addr}")
+    addrs = ", ".join(str(s.getsockname()) for s in server.sockets)
+    print(f"Servidor escutando em {addrs}")
     async with server:
         await server.serve_forever()
 
