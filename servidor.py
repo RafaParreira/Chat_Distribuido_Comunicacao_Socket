@@ -136,11 +136,30 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
             # opcional: ignore/erro para tipos desconhecidos, inclusive file_*
             elif mtype in {"file_info", "file_data", "file_end"}:
-                writer.write(jline({"type": "error", "error": "file_not_supported_in_server"}))
-                await writer.drain()
-            else:
-                writer.write(jline({"type": "error", "error": "unknown_type"}))
-                await writer.drain()
+    # Encaminha arquivo. Se vier "to", envia só para esse usuário (DM); senão, broadcast.
+                payload = {"type": mtype}
+                for k in ("name", "size", "data"):
+                    if k in msg:
+                        payload[k] = msg[k]
+                        payload["from"] = name  # útil para o receptor logar quem enviou
+
+                to = (msg.get("to") or "").strip()
+                if to:
+                    dest = by_name.get(to)
+                    if not dest:
+                        writer.write(jline({"type": "error", "error": "user_not_found"}))
+                        await writer.drain()
+                    else:
+                        try:
+                            dest.write(jline(payload))
+                            await dest.drain()
+                        except Exception:
+                            await disconnect(dest)
+                            writer.write(jline({"type": "error", "error": "user_not_found"}))
+                            await writer.drain()
+                else:
+        # arquivo público: envia a todos, exceto o remetente
+                    await broadcast(payload, exclude=writer)
 
     except Exception as e:
         # log simples
