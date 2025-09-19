@@ -86,6 +86,30 @@ async def send_file(writer, filepath: str):
     await writer.drain()
     print(f"[+] Arquivo {filename} enviado")
 
+
+async def send_file_pm(writer, to: str, filepath: str):
+    if not os.path.exists(filepath):
+        print("[erro] arquivo não encontrado")
+        return
+
+    filename = os.path.basename(filepath)
+    size = os.path.getsize(filepath)
+
+    # avisa destino
+    writer.write(jline({"type": "file_info", "to": to, "name": filename, "size": size}))
+    await writer.drain()
+
+    with open(filepath, "rb") as f:
+        while chunk := f.read(4096):
+            b64 = base64.b64encode(chunk).decode("utf-8")
+            writer.write(jline({"type": "file_data", "to": to, "data": b64}))
+            await writer.drain()
+
+    writer.write(jline({"type": "file_end", "to": to, "name": filename}))
+    await writer.drain()
+    print(f"[+] Arquivo privado para {to}: {filename}")
+    
+
 async def writer_task(writer: asyncio.StreamWriter, name: str):
     # primeiro JOIN
     writer.write(jline({"type": "join", "name": name}))
@@ -119,11 +143,19 @@ async def writer_task(writer: asyncio.StreamWriter, name: str):
             writer.write(jline({"type": "pm", "to": to, "msg": msg_txt}))
             await writer.drain()
             continue
-
-
         if text.lower() == "/quem":
             writer.write(jline({"type": "who"}))
             await writer.drain()
+            continue
+
+        if text.startswith("/pmfile "):
+            parts = text.split(" ", 2)
+            if len(parts) < 3:
+                print("[erro] uso: /pmfile <nome> <caminho>")
+                continue
+            to = parts[1].strip()
+            filepath = parts[2].strip()
+            await send_file_pm(writer, to, filepath)  # função nova
             continue
 
         # comando para enviar arquivo
@@ -158,3 +190,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
