@@ -192,7 +192,7 @@ async def writer_task(writer: asyncio.StreamWriter, name: str):
         if text.lower() == "/quem":
             writer.write(jline({"type": "who"}))
             await writer.drain()
-            continue
+            continue 
 
         if text.startswith("/pmfile "):
             parts = text.split(" ", 2)
@@ -214,13 +214,17 @@ async def writer_task(writer: asyncio.StreamWriter, name: str):
 
 
 async def main():
-    if len(sys.argv) < 2:
-        print(f"uso: python {sys.argv[0]} <seu_nome>")
-        return
-    name = sys.argv[1]
+    while True:
+        name = input("Digite seu nome: ").strip()
+        if name:
+            name = name[:11] #limite de caracteres
+            break
+        print("nome não pode ser vazio")
     reader, writer = await asyncio.open_connection(HOST, PORT)
-    await asyncio.gather(reader_task(reader), writer_task(writer, name))
-
+    await asyncio.gather(
+        reader_task(reader),
+        writer_task(writer, name),
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
