@@ -147,10 +147,18 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 for k in ("name", "size", "data"):
                     if k in msg:
                         payload[k] = msg[k]
-                payload["from"] = names.get(writer, "?")
+                sender = names.get(writer, "?")
+                payload["from"] = sender
 
                 group = msg.get("group")
                 to = (msg.get("to") or "").strip()
+
+    # Se for file_info, prepara aviso textual
+                notice = None
+                if mtype == "file_info":
+                    fname = payload.get("name", "?")
+                    size = payload.get("size", "?")
+                    notice = {"type": "system", "msg": f"[arquivo] {sender} enviou {fname} ({size} bytes)"}
 
                 if group:
                     if group not in groups:
@@ -161,23 +169,39 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                             if dest is writer:
                                 continue
                             try:
-                                payload["group"] = group
-                                dest.write(jline(payload))
+                                if notice:
+                                    dest.write(jline(notice))
+                                    await dest.drain()
+                                p = dict(payload)
+                                p["group"] = group
+                                dest.write(jline(p))
                                 await dest.drain()
                             except Exception:
                                 await disconnect(dest)
+
                 elif to:
-                    if to not in by_name:
+                    dest = by_name.get(to)
+                    if not dest:
                         writer.write(jline({"type": "error", "error": "destino_offline"}))
                         await writer.drain()
                     else:
-                        dest = by_name[to]
-                        payload["from"] = names.get(writer, "?")
-                        payload["pm"] = True
-                        dest.write(jline(payload))
-                        await dest.drain()
+                        try:
+                            if notice:
+                                dest.write(jline(notice))
+                                await dest.drain()
+                            p = dict(payload)
+                            p["pm"] = True
+                            dest.write(jline(p))
+                            await dest.drain()
+                        except Exception:
+                            await disconnect(dest)
+                            writer.write(jline({"type": "error", "error": "destino_offline"}))
+                            await writer.drain()
+
                 else:
-                    await broadcast(payload, exclude=writer)
+                    if notice:
+                        await broadcast(notice, exclude=writer)
+                        await broadcast(payload, exclude=writer)
 
     except Exception as e:
         print("Erro cliente:", e)
@@ -195,3 +219,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
