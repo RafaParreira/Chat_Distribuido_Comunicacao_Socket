@@ -1,6 +1,9 @@
 
 # 💬 Sistema de Chat Assíncrono com Grupos e Envio de Arquivos
 
+📄 **[Documentação Completa do Projeto](https://docs.google.com/document/d/1SYe64iOag_qjpesbO73uhAK-sUzhPDZX0D0CKHrULmM/edit?usp=sharing)**
+
+
 ## 📌 Introdução
 
 A comunicação evoluiu da linguagem gestual à digital, tornando-se essencial em nossa sociedade. Neste projeto, foi desenvolvido um **sistema de chat assíncrono em Python**, inspirado em aplicativos como WhatsApp e Telegram, com foco em mensagens privadas, em grupo e envio de arquivos via terminal.
